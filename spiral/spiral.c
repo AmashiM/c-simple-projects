@@ -288,7 +288,7 @@ void array_spiral_for2(array_spiral_callback cb){
     }
 }
 
-
+// latest version of function
 void array_spiral_for(array_spiral_callback cb){
     /**md
      * `r/s(x|y)/` = min
