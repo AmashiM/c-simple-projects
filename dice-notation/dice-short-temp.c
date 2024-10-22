@@ -57,6 +57,7 @@ long dice_roll(int amount, int sides, uint8_t keep_highest, uint8_t keep_lowest)
 #define TYPE_MULT 10
 #define TYPE_DIV 11
 #define TYPE_EMPTY 12
+#define TYPE_MATH 13
 
 const char* token_type_as_str(int type){
     switch(type){
@@ -113,7 +114,6 @@ typedef struct tagRealToken {
     int type; // 0
     int value; // 1
     uint8_t used; // 2
-    uint8_t ref; // 3
 } RealToken;
 
 typedef struct tagMathToken {
@@ -172,33 +172,23 @@ void dice_notation_print_realtokens(RealToken tokens[], const int length){
     }
 }
 
-/**
- * Next steps:
- * - shorten memory footprint
- * - incorporate some bitwise in here to try and shorten the computation
- * - decrease the amount of loops
- * - maybe replace some of these similar types with bitflags
- * - check the numbers to see if they could be unsigned
- * 
- * - [solved] implement something to actually give a result
- */
-long dice_notation(const char* text){
-    unsigned int length = strlen(text);
+void dice_notation(const char* text, long* out_value){
+    const uint8_t length = strlen(text);
+    if(length > 200){
+        printf("length of dice notation exceeds processing limits\n");
+        return; // why the hell is it that long
+    }
+
     PairToken tokens[length];
 
-    int dice_count = 0;
-    int keep_count = 0;
-    int math_count = 0;
+    uint8_t dice_count = 0, keep_count = 0, math_count = 0;
+    uint8_t group_start_count = 0, group_end_count = 0;
 
-    int group_start_count = 0;
-    int group_end_count = 0;
+    uint16_t last_number_index = -1;
+    uint8_t processing_number = 0, number_count = 0;
 
-    int last_number_index = -1;
-    uint8_t processing_number = 0;
-    int number_count = 0;
-
-    unsigned int real_token_count = length;
-    for(unsigned int i = 0; i < length; i++){
+    uint16_t real_token_count = length;
+    for(uint16_t i = 0; i < length; i++){
         char c = text[i];
         uint8_t handling_number = 0;
         uint8_t value;
@@ -207,15 +197,16 @@ long dice_notation(const char* text){
             case 'd':
                 tokens[i].type = TYPE_DICE;
                 tokens[i].value = i; //define where it's located
-                dice_count = dice_count + 1;
+                dice_count++;
                 break;
             case 'k':
                 // tokens[i][0] = TYPE_EMPTY; // keep the TYPE_KEEP, but we'll be placing an empty here for now.
-                keep_count = keep_count + 1;
+                keep_count++;
+                char next_c = text[i+1];
                 tokens[i+1].type = TYPE_EMPTY; // just a reminder but if we're setting a type here and we don't skip incriment the I then this will automatically be overwritten in the next iteration.
                 real_token_count = real_token_count - 1; // since we're assigning empty for the initial token
                 tokens[i].value = 0;
-                switch(text[i+1]) {
+                switch(next_c) {
                     case 'h':
                         tokens[i].type = TYPE_KEEP_HIGH;
                         break;
@@ -236,20 +227,11 @@ long dice_notation(const char* text){
                 group_end_count = group_end_count + 1;
                 break;
             case '+':
-                tokens[i].type = TYPE_ADD;
-                tokens[i].value = 0;
-                math_count++;
-                break;
             case '-':
-                tokens[i].type = TYPE_SUB;
-                math_count++;
-                break;
             case '*':
-                tokens[i].type = TYPE_MULT;
-                math_count++;
-                break;
             case '/':
-                tokens[i].type = TYPE_DIV;
+                tokens[i].type = TYPE_MATH;
+                tokens[i].value = c;
                 math_count++;
                 break;
             case ' ':
@@ -260,7 +242,7 @@ long dice_notation(const char* text){
                 if('0' <= c && c <= '9'){
                     value = (c - '0');
                     handling_number = 1;
-                } else if(c != 'h' && c != 'l') {
+                } else {
                     printf("unexpected token: %c\n", c);
                 }
             }; break;
@@ -270,11 +252,11 @@ long dice_notation(const char* text){
             if(processing_number == 1) {
                 tokens[last_number_index].value = (tokens[last_number_index].value * 10) + value;
                 tokens[i].type = TYPE_EMPTY;
-                real_token_count = real_token_count - 1;
+                real_token_count--;
             } else {
                 last_number_index = i;
                 processing_number = 1;
-                number_count = number_count + 1;
+                number_count++;
                 tokens[i].type = TYPE_NUM;
                 tokens[i].value = value;
             }
@@ -286,19 +268,10 @@ long dice_notation(const char* text){
         }
     }
 
-    // dice_notation_print_pairtokens(tokens, length);
-
-    // printf("number count: %d\ntoken count: %d\nreal token count: %d\n", number_count, length, real_token_count);
-
-    // printf("----\n");
-
-    // add a check to see if group start count is equal to group end count.
-
     if(group_start_count != group_end_count){
         printf("group start count '(' should be equal to group end count ')'\n");
-        return -1;
+        return;
     }
-
 
     //remove unneccesary tokens
     RealToken real_tokens[real_token_count];
@@ -309,45 +282,41 @@ long dice_notation(const char* text){
     NumberToken number_cache[number_count];
     KeepToken keep_cache[keep_count]; // it's 3 because we reserve the 3rd value for the defined amount
 
-    int dice_cache_pos = 0;
-    int math_cache_pos = 0;
-    int number_cache_pos = 0;
-    int keep_cache_pos = 0;
+    int dice_cache_pos = 0, math_cache_pos = 0, number_cache_pos = 0, keep_cache_pos = 0;
 
     // organize the tokens to remove dead space and also have it record data on positions of tokens.
     for(int i = 0; i < length; i++){
-        int _type = tokens[i].type;
-        int _value = tokens[i].value;
-        if(_type == TYPE_EMPTY){
+        if(tokens[i].type == TYPE_EMPTY){
             continue;
         }
 
-        switch(_type){
+        switch(tokens[i].type){
             case TYPE_DICE:
                 dice_cache[dice_cache_pos].pos = real_token_pos;
-                real_tokens[real_token_pos].ref = dice_cache_pos;
                 dice_cache_pos++;
                 break;
             case TYPE_KEEP_LOW:
             case TYPE_KEEP_HIGH:
-                keep_cache[keep_cache_pos].pos = real_token_pos;
-                keep_cache[keep_cache_pos].type = _type;
-                real_tokens[real_token_pos].ref = keep_cache_pos;
+                keep_cache[dice_cache_pos].pos = real_token_pos;
+                keep_cache[dice_cache_pos].type = tokens[i].type;
                 keep_cache_pos++;
                 break;
             case TYPE_NUM:
                 number_cache[number_cache_pos].pos = real_token_pos;
-                number_cache[number_cache_pos].value = _value;
-                real_tokens[real_token_pos].ref = number_cache_pos;
+                number_cache[number_cache_pos].value = tokens[i].value;
                 number_cache_pos++;
                 break;
-            case TYPE_SUB:
-            case TYPE_DIV:
-            case TYPE_MULT:
-            case TYPE_ADD:
+            case TYPE_MATH:
                 math_cache[math_cache_pos].pos = real_token_pos;
-                math_cache[math_cache_pos].type = _type;
-                real_tokens[real_token_pos].ref = math_cache_pos;
+                uint8_t type = -1;
+                switch(tokens[i].value){
+                    case '+': type = TYPE_ADD; break;
+                    case '-': type = TYPE_SUB; break;
+                    case '/': type = TYPE_DIV; break;
+                    case '*': type = TYPE_MULT; break;
+                    default: printf("unknown math operation used\n"); break;
+                }
+                math_cache[math_cache_pos].type = type;
                 math_cache_pos++;
                 break;
             default:
@@ -355,19 +324,18 @@ long dice_notation(const char* text){
                 break;
         }
 
-        real_tokens[real_token_pos].type = _type;
-        real_tokens[real_token_pos].value = _value;
+        real_tokens[real_token_pos].type = tokens[i].type;
+        real_tokens[real_token_pos].value = tokens[i].value;
         real_token_pos++;
     }
 
-    // dice_notation_print_realtokens(real_tokens, real_token_pos);
-    // dice_notation_print_dicetokens(dice_cache, dice_cache_pos);
+    dice_notation_print_realtokens(real_tokens, real_token_pos);
+    dice_notation_print_dicetokens(dice_cache, dice_cache_pos);
 
     // lets define keep
 
     for(int i = 0; i < keep_cache_pos; i++){
         int pos = keep_cache[i].pos;
-        int next_type = real_tokens[pos+1].type;
         if(real_tokens[pos+1].type == TYPE_NUM){
             int value = real_tokens[pos+1].value;
             keep_cache[i].value = value; // might not be needed
@@ -400,17 +368,15 @@ long dice_notation(const char* text){
                 continue; // token already in use
             }
 
-            int real_type = real_tokens[i].type;
-            int real_value = real_tokens[i].value;
-            switch(real_type){
+            switch(real_tokens[i].type){
                 case TYPE_KEEP_HIGH:
-                    keep_high = real_value;
+                    keep_high = keep_high + real_tokens[i].value;
                     break;
                 case TYPE_KEEP_LOW:
-                    keep_low = keep_low + real_value;
+                    keep_low = keep_low + real_tokens[i].value;
                     break;
                 case TYPE_NUM:
-                    amount = real_value;
+                    amount = real_tokens[i].value;
                     break;
                 default:
                     ok = 0;
@@ -431,17 +397,15 @@ long dice_notation(const char* text){
                 continue; // token already in use
             }
 
-            int real_type = real_tokens[i].type;
-            int real_value = real_tokens[i].value;
-            switch(real_type){
+            switch(real_tokens[i].type){
                 case TYPE_KEEP_HIGH:
-                    keep_high = real_value;
+                    keep_high = keep_high + real_tokens[i].value;
                     break;
                 case TYPE_KEEP_LOW:
-                    keep_low = keep_low + real_value;
+                    keep_low = keep_low + real_tokens[i].value;
                     break;
                 case TYPE_NUM:
-                    sides = sides + real_value;
+                    sides = sides + real_tokens[i].value;
                     break;
                 default:
                     ok = 0;
@@ -461,91 +425,37 @@ long dice_notation(const char* text){
     }
 
 
-    // // after processing caches
-    // dice_notation_print_realtokens(real_tokens, real_token_pos);
-    // dice_notation_print_dicetokens(dice_cache, dice_cache_pos);
+    // after processing caches
+    dice_notation_print_realtokens(real_tokens, real_token_pos);
+    dice_notation_print_dicetokens(dice_cache, dice_cache_pos);
 
-    int unused_count = real_token_pos;
-    for(unsigned int i = 0; i < real_token_pos; i++){
-        if(real_tokens[i].used == 1){
-            unused_count--;
+    unsigned int unused_count = 0;
+    for(uint16_t i = 0; i < real_token_pos; i++){
+        if(real_tokens[i].used == 0){
+            unused_count++;
         }
     }
 
     int unused_cache[unused_count];
-    int unused_cache_pos = 0;
-
-    // try walking through current tokens
-
-    for(unsigned int i = 0; i < real_token_pos; i++){
-        if(real_tokens[i].used != 1){
-            unused_cache[unused_cache_pos] = i;
-            unused_cache_pos = unused_cache_pos + 1;
-        }
-    }
 
     // roll some stuff
 
-    // printf("rolling\n");
 
-    long out_value = 0;
-
-    uint8_t current_operation = 0;
-
-    // printf("unusded cache size: %d\n", unused_cache_pos);s
-
-    for(int i = 0; i < unused_cache_pos; i++){
-        uint16_t pos = unused_cache[i];
-        RealToken* token = &real_tokens[pos];
-        if(token == NULL){
-            printf("failed to get token\n");
-            continue;
-        }
-        // printf("before value: %ld\n", out_value);
-        // printf("got type: %s\n", token_type_as_str(token->type));
-        switch(token->type){
-            case TYPE_DICE: {
-                token->used = 1;
-                long rolled_dice = dice_roll(dice_cache[token->ref].amount, dice_cache[token->ref].sides, dice_cache[token->ref].keep_high, dice_cache[token->ref].keep_low);
-                // printf("rolled a %ld\n", rolled_dice);
-                out_value = out_value + rolled_dice;
-            }; break;
-            case TYPE_ADD:
-                token->used = 1;
-                current_operation = TYPE_ADD;
-                break;
-            case TYPE_NUM:
-                if(current_operation != 0){
-                    switch(current_operation){
-                        case TYPE_ADD:
-                            token->used = 1;
-                            out_value = out_value + token->value;
-                            break;
-                        case TYPE_SUB:
-                            token->used = 1;
-                            out_value = out_value + token->value;
-                            break;
-                        default:
-                            break;
-                    }
-                }
-        }
-        // printf("after value: %ld\n", out_value);
-    }
-
-    return out_value;
 }
+
 
 int main(void){
     srand(time(NULL));
 
-    long dice_result;
+    int out = dice_roll(2, 20, 0, 0);
 
-    dice_result = dice_notation("2kh1d20 + 2 ");
-    printf("got dice result of: %ld\n", dice_result);
+    printf("got: %d\n", out);
 
-    dice_result = dice_notation("2kh1d20 + 2 ");
-    printf("got dice result of: %ld\n", dice_result);
+    long dice_result = 0;
+
+    dice_notation("2kh1d20 + 2 ", &dice_result);
+
+    printf("got dice result of: %ld", dice_result);
 
     return 0;
 }
