@@ -5,40 +5,92 @@
 #include "stdint.h"
 #include "math.h"
 #include "string.h"
+#include "limits.h"
 
-
-long dice_roll(int amount, int sides, uint8_t keep_highest, uint8_t keep_lowest){
+long dice_roll(uint16_t amount, uint16_t sides, uint8_t keep_highest, uint8_t keep_lowest){
     long total = 0;
 
-    uint8_t mode = 0;
+    uint8_t keep = 0;
 
-    // if keep_highest doesn't equal 0
-    if(keep_highest){
-        mode = 1;
+    if(keep_highest > 0 || keep_lowest > 0){
+        keep = 1;
     }
-    // if keep_lowest doesn't equal 0
-    else if(keep_lowest){
-        mode = 2;
+
+    uint16_t* values = calloc(sizeof(uint16_t), amount);
+    if(values == NULL){
+        printf("failed to allocate space for values\n");
+        return -1;
     }
 
     for(int i = 0; i < amount; i++){
-        int result = (int)((rand() % sides) + 1);
-        switch(mode){
-            case 0:
-                total = total + result;
-                break;
-            case 1:
-                if(total < result){
-                    total = result;
-                }
-                break;
-            case 2:
-                if(total > result){
-                    total = result;
-                }
-                break;
+        values[i] = (int)((rand() % sides) + 1);
+    }
+
+    for(uint16_t i = 0; i < amount; i++){
+        for(uint16_t j = i+1; j < amount; j++){
+            if(values[i] > values[j]){
+                uint16_t temp = values[i];
+                values[i] = values[j];
+                values[j] = temp;
+            }
         }
     }
+
+    if(keep == 0){
+        for(int i = 0; i < amount; i++){
+            total = total + values[i];
+        }
+    } else {
+        uint16_t* high = NULL;
+        uint16_t* low = NULL;
+        if(keep_highest > 0){
+            high = (uint16_t*)calloc(sizeof(uint16_t), keep_highest);
+            if(high == NULL){
+                printf("failed to allocate space for high values\n");
+                return -1;
+            }
+        }
+        if(keep_lowest > 0){
+            low = (uint16_t*)calloc(sizeof(uint16_t), keep_lowest);
+            if(low == NULL){
+                printf("failed to allocate space for low values\n");
+                return -1;
+            }
+            for(uint8_t i = 0; i < keep_lowest; i++){
+                low[i] = (uint16_t)INT_MAX;
+            }
+        }
+
+        uint16_t offset = amount - keep_highest;
+        for(uint8_t i = 0; i < keep_highest; i++){
+            high[i] = values[offset + i];
+        }
+
+        for(uint8_t i = 0; i < keep_lowest; i++){
+            low[i] = values[i];
+        }
+
+        for(uint8_t i = 0; i < keep_highest; i++){
+            total = total + high[i];
+        }
+
+        for(uint8_t i = 0; i < keep_lowest; i++){
+            total = total + low[i];
+        }
+
+        if(high != NULL){
+            free(high);
+            high = NULL;
+        }
+
+        if(low != NULL){
+            free(low);
+            low = NULL;
+        }
+    }
+
+    free(values);
+    values = NULL;
 
     return total;
 }
@@ -172,40 +224,47 @@ void dice_notation_print_realtokens(RealToken tokens[], const int length){
     }
 }
 
+#define TOKEN_TYPE uint8_t
+
 /**
  * Next steps:
  * - shorten memory footprint
  * - incorporate some bitwise in here to try and shorten the computation
  * - decrease the amount of loops
  * - maybe replace some of these similar types with bitflags
+ * - check the numbers to see if they could be unsigned
  * 
- * - implement something to actually give a result
+ * - [solved] make it so the notation has a limit.
+ * - [solved] implement something to actually give a result
  */
 long dice_notation(const char* text){
-    unsigned int length = strlen(text);
-
-    PairToken* tokens = malloc(sizeof(PairToken) * length);
+    size_t length = strlen(text);
+    if(length > 200){
+        printf("don't feel like doing a dice notation with more than 200 characters\n");
+        return 0; // why
+    }
+    PairToken* tokens = calloc(sizeof(PairToken), length);
     if(tokens == NULL){
-        printf("failed to create storage for pairtokens in memory\n");
-        return -1;
+        printf("failed to allocate space for tokens\n");
+        return 0;
     }
 
-    int dice_count = 0;
-    int keep_count = 0;
-    int math_count = 0;
+    uint16_t dice_count = 0;
+    uint16_t keep_count = 0;
+    uint16_t math_count = 0;
 
-    int group_start_count = 0;
-    int group_end_count = 0;
+    uint16_t group_start_count = 0;
+    uint16_t group_end_count = 0;
 
-    int last_number_index = -1;
+    signed int last_number_index = -1;
     uint8_t processing_number = 0;
-    int number_count = 0;
+    uint16_t number_count = 0;
 
-    unsigned int real_token_count = length;
-    for(unsigned int i = 0; i < length; i++){
+    uint8_t real_token_count = length;
+    for(uint8_t i = 0; i < (uint8_t)length; i++){
         char c = text[i];
         uint8_t handling_number = 0;
-        uint8_t value = 0;
+        uint8_t value;
 
         switch(c){
             case 'd':
@@ -233,11 +292,11 @@ long dice_notation(const char* text){
                 break;
             case '(':
                 tokens[i].type = TYPE_GROUP_START;
-                group_start_count = group_start_count + 1;
+                group_start_count++;
                 break;
             case ')':
                 tokens[i].type = TYPE_GROUP_END;
-                group_end_count = group_end_count + 1;
+                group_end_count++;
                 break;
             case '+':
                 tokens[i].type = TYPE_ADD;
@@ -303,45 +362,53 @@ long dice_notation(const char* text){
         return -1;
     }
 
+    
 
     //remove unneccesary tokens
-    RealToken* real_tokens = malloc(sizeof(RealToken) * real_token_count);
+    RealToken* real_tokens = calloc(sizeof(RealToken), real_token_count);
+    if(real_tokens == NULL){
+        printf("failed to allocate space for real_tokens\n");
+        return 0;
+    }
     int real_token_pos = 0;
 
-    DiceToken* dice_cache = malloc(sizeof(DiceToken) * dice_count);
-    MathToken* math_cache = malloc(sizeof(MathToken) * math_count);
-    NumberToken* number_cache = malloc(sizeof(NumberToken) * number_count);
-    KeepToken* keep_cache = malloc(sizeof(KeepToken) * keep_count);
+    DiceToken* dice_cache = calloc(sizeof(DiceToken), dice_count);
+    MathToken* math_cache = calloc(sizeof(MathToken), math_count);
+    NumberToken* number_cache = calloc(sizeof(NumberToken), number_count);
+    KeepToken* keep_cache = calloc(sizeof(KeepToken), keep_count);
 
-    int dice_cache_pos = 0;
-    int math_cache_pos = 0;
-    int number_cache_pos = 0;
-    int keep_cache_pos = 0;
+    uint16_t dice_cache_pos = 0;
+    uint16_t math_cache_pos = 0;
+    uint16_t number_cache_pos = 0;
+    uint16_t keep_cache_pos = 0;
 
     // organize the tokens to remove dead space and also have it record data on positions of tokens.
     for(int i = 0; i < length; i++){
-        PairToken token = tokens[i];
-        if(token.type == TYPE_EMPTY){
+        TOKEN_TYPE _type = tokens[i].type;
+        int _value = tokens[i].value;
+        if(_type == TYPE_EMPTY){
             continue;
         }
 
-        switch(token.type){
+        int out_ref = -1; // -1 could mean no ref, this could also be a 16 bit int
+
+        switch(_type){
             case TYPE_DICE:
                 dice_cache[dice_cache_pos].pos = real_token_pos;
-                real_tokens[real_token_pos].ref = dice_cache_pos;
+                out_ref = dice_cache_pos;
                 dice_cache_pos++;
                 break;
             case TYPE_KEEP_LOW:
             case TYPE_KEEP_HIGH:
                 keep_cache[keep_cache_pos].pos = real_token_pos;
-                keep_cache[keep_cache_pos].type = token.type;
-                real_tokens[real_token_pos].ref = keep_cache_pos;
+                keep_cache[keep_cache_pos].type = _type;
+                out_ref = keep_cache_pos;
                 keep_cache_pos++;
                 break;
             case TYPE_NUM:
                 number_cache[number_cache_pos].pos = real_token_pos;
-                number_cache[number_cache_pos].value = token.value;
-                real_tokens[real_token_pos].ref = number_cache_pos;
+                number_cache[number_cache_pos].value = _value;
+                out_ref = number_cache_pos;
                 number_cache_pos++;
                 break;
             case TYPE_SUB:
@@ -349,8 +416,8 @@ long dice_notation(const char* text){
             case TYPE_MULT:
             case TYPE_ADD:
                 math_cache[math_cache_pos].pos = real_token_pos;
-                math_cache[math_cache_pos].type = token.type;
-                real_tokens[real_token_pos].ref = math_cache_pos;
+                math_cache[math_cache_pos].type = _type;
+                out_ref = math_cache_pos;
                 math_cache_pos++;
                 break;
             default:
@@ -358,17 +425,17 @@ long dice_notation(const char* text){
                 break;
         }
 
-        real_tokens[real_token_pos].type = token.type;
-        real_tokens[real_token_pos].value = token.value;
+        real_tokens[real_token_pos].ref = out_ref;
+        real_tokens[real_token_pos].type = _type;
+        real_tokens[real_token_pos].value = _value;
         real_token_pos++;
     }
 
-    // we are done with our pairtokens
-    free(tokens);
-    tokens = NULL;
-
     // dice_notation_print_realtokens(real_tokens, real_token_pos);
     // dice_notation_print_dicetokens(dice_cache, dice_cache_pos);
+
+    free(tokens);
+    tokens = NULL;
 
     // lets define keep
 
@@ -394,10 +461,10 @@ long dice_notation(const char* text){
         int before_pos = dice_pos-1;
         int after_pos = dice_pos+1;
 
-        unsigned int keep_high = 0;
-        unsigned int keep_low = 0;
-        int amount = 1;
-        int sides = 0;
+        unsigned int keep_high = 0; // should not be negative
+        unsigned int keep_low = 0; // should not be negative
+        unsigned int amount = 1;
+        unsigned int sides = 0;
 
         uint8_t ok = 1;
 
@@ -407,15 +474,17 @@ long dice_notation(const char* text){
                 continue; // token already in use
             }
 
-            switch(real_tokens[i].type){
+            int real_type = real_tokens[i].type;
+            int real_value = real_tokens[i].value;
+            switch(real_type){
                 case TYPE_KEEP_HIGH:
-                    keep_high = real_tokens[i].value;
+                    keep_high = real_value;
                     break;
                 case TYPE_KEEP_LOW:
-                    keep_low = keep_low + real_tokens[i].value;
+                    keep_low = keep_low + real_value;
                     break;
                 case TYPE_NUM:
-                    amount = real_tokens[i].value;
+                    amount = real_value;
                     break;
                 default:
                     ok = 0;
@@ -436,15 +505,17 @@ long dice_notation(const char* text){
                 continue; // token already in use
             }
 
-            switch(real_tokens[i].type){
+            int real_type = real_tokens[i].type;
+            int real_value = real_tokens[i].value;
+            switch(real_type){
                 case TYPE_KEEP_HIGH:
-                    keep_high = real_tokens[i].value;
+                    keep_high = real_value;
                     break;
                 case TYPE_KEEP_LOW:
-                    keep_low = keep_low + real_tokens[i].value;
+                    keep_low = keep_low + real_value;
                     break;
                 case TYPE_NUM:
-                    sides = sides + real_tokens[i].value;
+                    sides = sides + real_value;
                     break;
                 default:
                     ok = 0;
@@ -475,7 +546,7 @@ long dice_notation(const char* text){
         }
     }
 
-    int* unused_cache = malloc(sizeof(int) * unused_count);
+    int unused_cache[unused_count];
     int unused_cache_pos = 0;
 
     // try walking through current tokens
@@ -497,7 +568,7 @@ long dice_notation(const char* text){
 
     // printf("unusded cache size: %d\n", unused_cache_pos);s
 
-    for(unsigned int i = 0; i < unused_cache_pos; i++){
+    for(int i = 0; i < unused_cache_pos; i++){
         uint16_t pos = unused_cache[i];
         RealToken* token = &real_tokens[pos];
         if(token == NULL){
@@ -537,19 +608,19 @@ long dice_notation(const char* text){
     }
 
     free(dice_cache);
-    free(keep_cache);
-    free(math_cache);
-    free(number_cache);
     dice_cache = NULL;
+
+    free(keep_cache);
     keep_cache = NULL;
+
+    free(math_cache);
     math_cache = NULL;
+
+    free(number_cache);
     number_cache = NULL;
 
     free(real_tokens);
     real_tokens = NULL;
-
-    free(unused_cache);
-    unused_cache = NULL;
 
     return out_value;
 }
@@ -557,13 +628,15 @@ long dice_notation(const char* text){
 int main(void){
     srand(time(NULL));
 
+    // long result = dice_roll(10, 20, 3, 3);
+    // printf("result: %ld\n", result);
+
     long dice_result;
 
-    dice_result = dice_notation("2kh1d20 + 2 ");
-    printf("got dice result of: %ld\n", dice_result);
-
-    dice_result = dice_notation("2kh1d20 + 2 ");
-    printf("got dice result of: %ld\n", dice_result);
+    for(int i = 0; i < 20; i++){
+        dice_result = dice_notation("2kh1d20 + 2 ");
+        printf("got dice result of: %ld\n", dice_result);
+    }
 
     return 0;
 }

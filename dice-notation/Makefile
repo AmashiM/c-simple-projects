@@ -1,8 +1,10 @@
 
+TARGET=dice2
+
 all: c
 
 c:
-	gcc ./dice.c -o main
+	gcc $(TARGET).c -o main
 
 java:
 	javac Dice.java
