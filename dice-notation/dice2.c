@@ -265,6 +265,14 @@ void dice_notation_print_groupplacementtokens(GroupPlacementToken* group_tokens,
     }
 }
 
+void dice_notation_print_grouptokens(GroupToken* tokens, const uint8_t length){
+    for(uint8_t i = 0; i < length; i++){
+        GroupToken* token = &tokens[i];
+
+        printf("GroupToken(pos: %d, priority: %d, start: %d, end: %d)\n", token->pos, token->priority, token->start_pos, token->end_pos);
+    }
+}
+
 #define TOKEN_TYPE uint8_t
 
 
@@ -421,13 +429,13 @@ long dice_notation(const char* text){
     MathToken* math_cache = calloc(sizeof(MathToken), math_count);
     NumberToken* number_cache = calloc(sizeof(NumberToken), number_count);
     KeepToken* keep_cache = calloc(sizeof(KeepToken), keep_count);
-    GroupToken* group_cache = calloc(sizeof(GroupToken), group_start_count);
+    GroupToken* group_cache = calloc(sizeof(GroupToken), group_start_count+1);
 
     uint8_t dice_cache_pos = 0;
     uint8_t math_cache_pos = 0;
     uint8_t number_cache_pos = 0;
     uint8_t keep_cache_pos = 0;
-    uint8_t group_cache_pos = 0;
+    uint8_t group_cache_pos = 1;
 
     uint8_t group_start_pos = 0;
     uint8_t group_end_pos = 0;
@@ -443,7 +451,6 @@ long dice_notation(const char* text){
     }
 
     uint8_t group_priority = 0;
-
 
     // organize the tokens to remove dead space and also have it record data on positions of tokens.
     for(uint16_t i = 0; i < length; i++){
@@ -511,6 +518,14 @@ long dice_notation(const char* text){
         real_token_pos++;
     }
 
+    // define main group -- this is required to process everything
+    group_cache[0].pos = -1;
+    group_cache[0].start_pos = 0;
+    group_cache[0].end_pos = real_token_pos - 1;
+    group_cache[0].type = TYPE_GROUP_START;
+    group_cache[0].priority = 0;
+
+
     dice_notation_print_realtokens(real_tokens, real_token_pos);
     // dice_notation_print_dicetokens(dice_cache, dice_cache_pos);
 
@@ -525,7 +540,25 @@ long dice_notation(const char* text){
 
     // lets organize the actual group tokens
 
-    for(uint8_t i = 0; i < group_start_pos; i++){}
+    for(uint8_t i = 0; i < group_start_pos; i++){
+        GroupPlacementToken* start_token = &group_start_cache[i];
+        for(uint8_t j = 0; j < group_end_pos; j++){
+            GroupPlacementToken* end_token = &group_end_cache[j];
+
+            if(end_token->used == 1){
+                continue;
+            }
+
+            if(end_token->priority == start_token->priority){
+                GroupToken* group_token = &group_cache[real_tokens[start_token->pos].ref];
+                group_token->end_pos = end_token->pos;
+                end_token->used = 1;
+                break;
+            }
+        }
+    }
+
+    dice_notation_print_grouptokens(group_cache, group_cache_pos);
 
 
     // lets define keep
@@ -660,60 +693,138 @@ long dice_notation(const char* text){
 
     // printf("unusded cache size: %d\n", unused_cache_pos);
 
-    for(uint16_t i = 0; i < unused_cache_pos; i++){
-        uint16_t pos = unused_cache[i];
-        RealToken* token = &real_tokens[pos];
-        if(token == NULL){
-            printf("failed to get token\n");
-            continue;
+
+    // new way of processing the output
+
+    for(uint8_t group_cache_index = group_cache_pos; 0 < group_cache_index; group_cache_index--){
+        printf("group_cache_index: %d\n", group_cache_index-1);
+        GroupToken* group_token = &group_cache[group_cache_index-1];
+        uint8_t size = group_token->end_pos - group_token->start_pos;
+        printf("group size: %d\n", size);
+
+        uint8_t group_unused_cache_pos = 0;
+        for(uint8_t i = 0; i < unused_count; i++){
+            if (group_token->start_pos <= i && i <= group_token->end_pos){
+                group_unused_cache_pos++;
+            }
         }
-        int token_value = token->value;
-        uint8_t used = token->used;
-        
-        // printf("before value: %ld\n", out_value);
-        // printf("got type: %s\n", token_type_as_str(token->type));
-        switch(token->type){
-            case TYPE_DICE: {
-                used = 1;
-                long rolled_dice = dice_roll(dice_cache[token->ref].amount, dice_cache[token->ref].sides, dice_cache[token->ref].keep_high, dice_cache[token->ref].keep_low);
-                // printf("rolled a %ld\n", rolled_dice);
-                out_value = out_value + rolled_dice;
-            }; break;
-            case TYPE_ADD:
-                used = 1;
-                current_operation = TYPE_ADD;
-                break;
-            case TYPE_NUM:
-                if(current_operation != 0){
-                    switch(current_operation){
-                        case TYPE_ADD:
-                            used = 1;
-                            out_value = out_value + token_value;
-                            break;
-                        case TYPE_SUB:
-                            used = 1;
-                            out_value = out_value + token_value;
-                            break;
-                        case TYPE_DIV:
-                            used = 1;
-                            out_value = out_value / token_value;
-                            break;
-                        case TYPE_MULT:
-                            used = 1;
-                            out_value = out_value * token_value;
-                        default:
-                            break;
+
+
+        for(uint16_t pos = group_token->start_pos; pos < group_token->end_pos; pos++){
+            printf("accessing pos: %d\n", pos);
+            RealToken* real_token = &real_token[pos];
+            if(real_token == NULL){
+                printf("failed to get real token\n");
+                continue;
+            }
+            uint8_t used = real_token->used;
+
+            if(used == 1){
+                printf("token was already used, this was unexpected\n");
+                continue;
+            }
+
+            printf("processing type\n");
+
+            switch(real_token->type){
+                case TYPE_DICE: {
+                    used = 1;
+                    DiceToken* dice_token = &dice_cache[real_token->ref];
+                    if(dice_token == NULL){
+                        printf("failed to get dice_token\n");
+                        break;
                     }
-                }
+                    long rolled_dice = dice_roll(dice_token->amount, dice_token->sides, dice_token->keep_high, dice_token->keep_low);
+                    // printf("rolled a %ld\n", rolled_dice);
+                    out_value = out_value + rolled_dice;
+                }; break;
+                case TYPE_ADD:
+                    used = 1;
+                    current_operation = TYPE_ADD;
+                    break;
+                case TYPE_NUM:
+                    if(current_operation != 0){
+                        switch(current_operation){
+                            case TYPE_ADD:
+                                used = 1;
+                                out_value = out_value + real_token->value;
+                                break;
+                            case TYPE_SUB:
+                                used = 1;
+                                out_value = out_value + real_token->value;
+                                break;
+                            case TYPE_DIV:
+                                used = 1;
+                                out_value = out_value / real_token->value;
+                                break;
+                            case TYPE_MULT:
+                                used = 1;
+                                out_value = out_value * real_token->value;
+                            default:
+                                break;
+                        }
+                    }
+            }
+            real_token->used = used;
         }
-        token->used = used;
-        // printf("after value: %ld\n", out_value);
+
     }
+
+
+    // for(uint16_t i = 0; i < unused_cache_pos; i++){
+    //     uint16_t pos = unused_cache[i];
+    //     RealToken* token = &real_tokens[pos];
+    //     if(token == NULL){
+    //         printf("failed to get token\n");
+    //         continue;
+    //     }
+    //     int token_value = token->value;
+    //     uint8_t used = token->used;
+        
+    //     // printf("before value: %ld\n", out_value);
+    //     // printf("got type: %s\n", token_type_as_str(token->type));
+    //     switch(token->type){
+    //         case TYPE_DICE: {
+    //             used = 1;
+    //             long rolled_dice = dice_roll(dice_cache[token->ref].amount, dice_cache[token->ref].sides, dice_cache[token->ref].keep_high, dice_cache[token->ref].keep_low);
+    //             // printf("rolled a %ld\n", rolled_dice);
+    //             out_value = out_value + rolled_dice;
+    //         }; break;
+    //         case TYPE_ADD:
+    //             used = 1;
+    //             current_operation = TYPE_ADD;
+    //             break;
+    //         case TYPE_NUM:
+    //             if(current_operation != 0){
+    //                 switch(current_operation){
+    //                     case TYPE_ADD:
+    //                         used = 1;
+    //                         out_value = out_value + token_value;
+    //                         break;
+    //                     case TYPE_SUB:
+    //                         used = 1;
+    //                         out_value = out_value + token_value;
+    //                         break;
+    //                     case TYPE_DIV:
+    //                         used = 1;
+    //                         out_value = out_value / token_value;
+    //                         break;
+    //                     case TYPE_MULT:
+    //                         used = 1;
+    //                         out_value = out_value * token_value;
+    //                     default:
+    //                         break;
+    //                 }
+    //             }
+    //     }
+    //     token->used = used;
+    //     // printf("after value: %ld\n", out_value);
+    // }
 
     void** pointers[] = {
         (void**)&dice_cache, (void**)&keep_cache, (void**)&math_cache,
         (void**)&number_cache, (void**)&real_tokens, (void**)&unused_cache,
-        (void**)&group_start_cache
+        (void**)&group_start_cache, (void**)&group_end_cache
     };
 
     for(uint8_t i = 0; i < 5; i++){

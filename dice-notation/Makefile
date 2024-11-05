@@ -1,5 +1,5 @@
 
-TARGET=dice2
+TARGET=dice3
 
 all: c
 

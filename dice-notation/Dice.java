@@ -2,12 +2,19 @@ public class Dice {
 
     // using a class here since I think enums are bs since you can't use math operators on them.
     public class TokenType {
-        public final int TYPE_EMPTY = 1;
-        public final int TYPE_DICE = 2;
-        public final int TYPE_MATH = 3;
-        public final int TYPE_SPACE = 4;
+        public final int TYPE_SPACE = 0;
+        public final int TYPE_DICE = 1;
+        public final int TYPE_NUM = 2;
+        public final int TYPE_KEEP = 3;
+        public final int TYPE_KEEP_HIGH = 4;
+        public final int TYPE_KEEP_LOW = 5;
         public final int TYPE_GROUP_START = 6;
         public final int TYPE_GROUP_END = 7;
+        public final int TYPE_ADD = 8;
+        public final int TYPE_SUB = 9;
+        public final int TYPE_MULT = 10;
+        public final int TYPE_DIV = 11;
+        public final int TYPE_EMPTY = 12;
     };
 
     class PairToken {
