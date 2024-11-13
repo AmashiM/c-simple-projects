@@ -110,22 +110,23 @@ long dice_roll(uint16_t amount, uint16_t sides, uint8_t keep_highest, uint8_t ke
     return total;
 }
 
+enum TokenType {
+    TYPE_SPACE = 0,
+    TYPE_DICE = 1,
+    TYPE_NUM = 2,
+    TYPE_KEEP = 3,
+    TYPE_KEEP_HIGH = 4,
+    TYPE_KEEP_LOW = 5,
+    TYPE_GROUP_START = 6,
+    TYPE_GROUP_END = 7,
+    TYPE_ADD = 8,
+    TYPE_SUB = 9,
+    TYPE_MULT = 10,
+    TYPE_DIV = 11,
+    TYPE_EMPTY = 12
+};
 
-#define TYPE_SPACE 0
-#define TYPE_DICE 1
-#define TYPE_NUM 2
-#define TYPE_KEEP 3
-#define TYPE_KEEP_HIGH 4
-#define TYPE_KEEP_LOW 5
-#define TYPE_GROUP_START 6
-#define TYPE_GROUP_END 7
-#define TYPE_ADD 8
-#define TYPE_SUB 9
-#define TYPE_MULT 10
-#define TYPE_DIV 11
-#define TYPE_EMPTY 12
-
-const char* token_type_as_str(int type){
+const char* token_type_as_str(enum TokenType type){
     switch(type){
         case TYPE_SPACE: return "SPACE";
         case TYPE_DICE: return "DICE";
@@ -172,12 +173,12 @@ void dice_notation_print_tokens(int tokens[][2], const int length){
 
 
 typedef struct tagPairToken {
-    int type;
+    enum TokenType type;
     int value;
 } PairToken; // it's called a pair since there's 2 values
 
 typedef struct tagRealToken {
-    int type; // 0
+    enum TokenType type; // 0
     int value; // 1
     uint8_t used; // 2
     uint8_t ref; // 3
@@ -185,7 +186,7 @@ typedef struct tagRealToken {
 
 typedef struct tagMathToken {
     int pos; // 0
-    int type; // 1
+    enum TokenType type; // 1
 } MathToken;
 
 typedef struct tagNumberToken {
@@ -195,7 +196,7 @@ typedef struct tagNumberToken {
 
 typedef struct tagKeepToken {
     int pos; // 0
-    int type; // 1
+    enum TokenType type; // 1
     int value; // 2
 } KeepToken;
 
@@ -269,6 +270,8 @@ void dice_notation_print_realtokens(RealToken tokens[], const int length){
 
 #define TOKEN_TYPE uint8_t
 
+#define TEXT_LENGTH_TYPE size_t
+#define GROUP_COUNT_TYPE uint8_t
 
 #define DICE_COUNT_TYPE uint8_t
 #define KEEP_COUNT_TYPE uint16_t // this should be higher than DICE_COUNT_TYPE since logically we want to allow for 2 per dice at the minimum.
@@ -289,7 +292,7 @@ typedef struct tagDiceNotationCounters {
     uint16_t real_token_count;
     uint8_t group_start_count;
     uint8_t group_end_count;
-    uint8_t group_count;
+    GROUP_COUNT_TYPE group_count;
 
     uint8_t dice_cache_pos;
     uint8_t math_cache_pos;
@@ -317,9 +320,10 @@ int dice_notation_parse_text(DiceNotationState* state, DiceNotationCounters* cou
 
     // printf("internal - parsing text\n");
 
-    counters->real_token_count = state->length;
+    // we start with the length as the real_token_count, but as we process the data we subtract from the total.
+    counters->real_token_count = (size_t)state->length;
     for(uint8_t i = 0; i < (uint8_t)state->length; i++){
-        char c = state->text[i];
+        char c = (char)state->text[i];
         uint8_t handling_number = 0;
         uint8_t value = 0;
 
@@ -385,16 +389,16 @@ int dice_notation_parse_text(DiceNotationState* state, DiceNotationCounters* cou
                 break;
             default: {
                 if('0' <= c && c <= '9'){
-                    value = (c - '0');
-                    handling_number = 1;
+                    value = (uint8_t)((int8_t)c - (int8_t)'0');
+                    handling_number = (uint8_t)1;
                 } else if(c != 'h' && c != 'l') {
                     printf("unexpected token: %c\n", c);
                 }
             }; break;
         }
 
-        if(handling_number){
-            if(processing_number == 1) {
+        if((uint8_t)handling_number == (uint8_t)1){
+            if((uint8_t)processing_number == (uint8_t)1) {
                 state->tokens[last_number_index].value = (state->tokens[last_number_index].value * 10) + value;
                 token->type = TYPE_EMPTY;
                 counters->real_token_count--;
@@ -626,7 +630,6 @@ int dice_notation_define_groups(DiceNotationCounters* counters, DiceNotationCach
     }
     counters->group_count++;
 
-
     cache->group_cache[0].priority = 0;
     cache->group_cache[0].start_pos = -1;
     cache->group_cache[0].end_pos = counters->real_token_pos;
@@ -752,29 +755,27 @@ long dice_notation_simple_process(DiceNotationCounters* counters, DiceNotationCa
     return out_value;
 }
 
-
 long dice_notation_advanced_process(DiceNotationCounters* counters, DiceNotationCache* cache){
 
-
     // sort the group cache so the group cache is sorted highest to lowest priority.
-    for(uint8_t i = 0; i < counters->group_count; i++){
-        GroupToken* token_i = &cache->group_cache[i];
-        for(uint8_t j = i+1; j < counters->group_count; j++){
+    for(GROUP_COUNT_TYPE i = 0; i < (GROUP_COUNT_TYPE)counters->group_count; i++){
+        uint8_t i_priority = cache->group_cache[i].priority;
+        for(GROUP_COUNT_TYPE j = i+1; j < (GROUP_COUNT_TYPE)counters->group_count; j++){
             GroupToken* token_j = &cache->group_cache[j];
-            if(token_i->priority < token_j->priority){
+            if(i_priority < token_j->priority){
                 GroupToken temp;
                 // don't you love copying memory directly :)
-                memcpy(&temp, &cache->group_cache[i], sizeof(GroupToken));
-                memcpy(&cache->group_cache[i], &cache->group_cache[j], sizeof(GroupToken));
-                memcpy(&cache->group_cache[j], &temp, sizeof(GroupToken));
-            } else if(token_i->priority == token_j->priority) {
+                memcpy((void*)&temp, (void*)&cache->group_cache[i], sizeof(GroupToken));
+                memcpy((void*)&cache->group_cache[i], (void*)&cache->group_cache[j], sizeof(GroupToken));
+                memcpy((void*)&cache->group_cache[j], (void*)&temp, sizeof(GroupToken));
+            } else if(i_priority == token_j->priority) {
                 // this is for cases where we have matching priority levels
-                if(token_i->start_pos > token_j->start_pos){
+                if(cache->group_cache[i].start_pos > cache->group_cache[j].start_pos){
                     GroupToken temp;
                     // don't you love copying memory directly :)
-                    memcpy(&temp, &cache->group_cache[i], sizeof(GroupToken));
-                    memcpy(&cache->group_cache[i], &cache->group_cache[j], sizeof(GroupToken));
-                    memcpy(&cache->group_cache[j], &temp, sizeof(GroupToken));
+                    memcpy((void*)&temp, (void*)&cache->group_cache[i], sizeof(GroupToken));
+                    memcpy((void*)&cache->group_cache[i], (void*)&cache->group_cache[j], sizeof(GroupToken));
+                    memcpy((void*)&cache->group_cache[j], (void*)&temp, sizeof(GroupToken));
                 }
             }
         }
@@ -823,7 +824,7 @@ long dice_notation_advanced_process(DiceNotationCounters* counters, DiceNotation
                 handle_num = 1;
                 // unsure if i should mark it as used.
                 DiceToken* dice_token = &cache->dice[token->ref];
-                number_value = dice_roll(dice_token->amount, dice_token->sides, dice_token->keep_high, dice_token->keep_low);
+                number_value = (long)dice_roll(dice_token->amount, dice_token->sides, dice_token->keep_high, dice_token->keep_low);
                 used = 1;
                 // printf("\t> rolled a %ld\n", number_value);
             } else if(token->type == TYPE_GROUP_START){

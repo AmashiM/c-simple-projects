@@ -14,3 +14,30 @@
 | / | division |
 | 0-9 | number |
 | () | parenthesis used to group operations |
+
+
+# Process
+
+### Storing Values
+- Need a cache for different tokens that we'll organize stuff into.
+- Need a way to track multiple variables that're closely related to
+
+
+### 1. Parse Text
+
+we'll need to first measure how long our text is.
+```c
+size_t length;
+```
+
+### 2. Organize Into Cache
+
+### 3. Define Keep
+
+### 4. Define Dice
+
+### 5. Define Groups
+this step is essential before we process our tokens to produce a result.
+
+
+### 6. Process Dice Notation
